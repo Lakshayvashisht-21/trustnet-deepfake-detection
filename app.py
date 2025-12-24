@@ -44,7 +44,7 @@ with st.sidebar:
     """)
     st.markdown("---")
     st.markdown("**Face Detector:** facenet-pytorch")
-    st.markdown("**Deepfake Model:** Hugging Face")
+    st.markdown("**Deepfake Model:** Hugging Face (Public)")
     st.markdown("**Inference:** CPU")
 
 # =========================
@@ -89,6 +89,7 @@ def extract_frames(video_path, output_folder, max_cap=400):
         ret, frame = cap.read()
         if not ret:
             break
+
         if count % interval == 0:
             cv2.imwrite(
                 os.path.join(output_folder, f"frame_{saved}.jpg"),
@@ -97,6 +98,7 @@ def extract_frames(video_path, output_folder, max_cap=400):
             saved += 1
             if saved >= desired_frames:
                 break
+
         count += 1
 
     cap.release()
@@ -133,18 +135,25 @@ def extract_faces(frames_folder, faces_folder):
     return face_count
 
 # =========================
-# DEEPFAKE DETECTOR (HUGGING FACE)
+# LOAD DEEPFAKE MODEL (CACHED)
+# =========================
+@st.cache_resource
+def load_deepfake_model():
+    processor = AutoImageProcessor.from_pretrained(
+        "prithivMLmods/Deep-Fake-Detector-Model"
+    )
+    model = AutoModelForImageClassification.from_pretrained(
+        "prithivMLmods/Deep-Fake-Detector-Model"
+    )
+    model.eval()
+    return processor, model
+
+# =========================
+# DEEPFAKE DETECTOR
 # =========================
 class DeepfakeDetector:
     def __init__(self):
-        self.processor = AutoImageProcessor.from_pretrained(
-    "prithivMLmods/Deep-Fake-Detector-Model"
-)
-self.model = AutoModelForImageClassification.from_pretrained(
-    "prithivMLmods/Deep-Fake-Detector-Model"
-)
-
-        self.model.eval()
+        self.processor, self.model = load_deepfake_model()
 
     def predict(self, image_path):
         image = Image.open(image_path).convert("RGB")
@@ -154,7 +163,9 @@ self.model = AutoModelForImageClassification.from_pretrained(
             outputs = self.model(**inputs)
             probs = torch.softmax(outputs.logits, dim=1)
 
-        return probs[0][0].item(), probs[0][1].item()
+        real_prob = probs[0][0].item()
+        fake_prob = probs[0][1].item()
+        return real_prob, fake_prob
 
 # =========================
 # AGGREGATION
@@ -221,8 +232,8 @@ if uploaded_video:
     st.markdown("### 🧠 Explanation")
     st.write(
         f"""
-        The system analyzed **{faces} face samples** sampled across the entire video.
-        The decision is based on **aggregated predictions** and **temporal consistency**.
+        The system analyzed **{faces} face samples** uniformly sampled across the video.
+        The verdict is based on **aggregated deepfake probabilities** and **prediction consistency**.
         """
     )
 
