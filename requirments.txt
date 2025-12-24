@@ -1,11 +1,13 @@
 streamlit==1.52.2
-opencv-python-headless==4.10.0.84
+opencv-python-headless==4.8.1.78
 mtcnn==0.1.1
 torch
 torchvision
+transformers
 numpy
 pillow
-transformers
+
+
 
 
 
