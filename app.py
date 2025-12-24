@@ -1,11 +1,11 @@
 import streamlit as st
 import os
-import cv2
-from mtcnn import MTCNN
-import torch
 import numpy as np
+import torch
 from PIL import Image
+from mtcnn import MTCNN
 from transformers import AutoImageProcessor, AutoModelForImageClassification
+import imageio
 
 # =========================
 # PAGE CONFIG
@@ -43,12 +43,9 @@ with st.sidebar:
     - 🧠 Deepfake Analysis  
     - 🧾 Explainable Verdict  
     """)
-
     st.markdown("---")
-    st.markdown("**Model**: Hugging Face Deepfake Classifier")
-    st.markdown("**Inference**: CPU")
-    st.markdown("**Explainability**: Enabled")
-    st.success("✅ Explainable Analysis Active")
+    st.markdown("**CV Backend**: Pure Python (Cloud-safe)")
+    st.success("✅ Streamlit Cloud Compatible")
 
 # =========================
 # FOLDERS
@@ -65,56 +62,42 @@ os.makedirs(FACES_FOLDER, exist_ok=True)
 # UPLOAD
 # =========================
 st.subheader("📤 Upload Media for Verification")
-st.caption("Supported formats: MP4, AVI, MOV")
-
 uploaded_video = st.file_uploader(
-    "Choose a video file",
+    "Supported formats: MP4, AVI, MOV",
     type=["mp4", "avi", "mov"]
 )
 
 # =========================
-# FRAME EXTRACTION (ADAPTIVE)
+# FRAME EXTRACTION (NO OPENCV)
 # =========================
 def extract_frames(video_path, output_folder, max_cap=400):
     os.makedirs(output_folder, exist_ok=True)
-    cap = cv2.VideoCapture(video_path)
 
-    if not cap.isOpened():
-        st.error("❌ Unable to read video")
-        return 0
+    reader = imageio.get_reader(video_path)
+    meta = reader.get_meta_data()
 
-    fps = cap.get(cv2.CAP_PROP_FPS)
-    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-
-    if fps <= 0 or total_frames <= 0:
-        fps = 30
-        total_frames = 300
+    fps = meta.get("fps", 30)
+    total_frames = meta.get("nframes", 300)
 
     duration_sec = total_frames / fps
     desired_frames = min(int(duration_sec * 0.5), max_cap)
     interval = max(total_frames // max(desired_frames, 1), 1)
 
-    count, saved = 0, 0
-    while True:
-        ret, frame = cap.read()
-        if not ret:
-            break
-
-        if count % interval == 0:
-            cv2.imwrite(
-                os.path.join(output_folder, f"frame_{saved}.jpg"),
-                frame
+    saved = 0
+    for i, frame in enumerate(reader):
+        if i % interval == 0:
+            Image.fromarray(frame).save(
+                os.path.join(output_folder, f"frame_{saved}.jpg")
             )
             saved += 1
             if saved >= desired_frames:
                 break
-        count += 1
 
-    cap.release()
+    reader.close()
     return saved
 
 # =========================
-# FACE EXTRACTION
+# FACE EXTRACTION (MTCNN)
 # =========================
 def extract_faces(frames_folder, faces_folder):
     detector = MTCNN()
@@ -123,47 +106,47 @@ def extract_faces(frames_folder, faces_folder):
 
     for img_name in os.listdir(frames_folder):
         img_path = os.path.join(frames_folder, img_name)
-        image = cv2.imread(img_path)
-        if image is None:
-            continue
+        image = Image.open(img_path).convert("RGB")
+        image_np = np.array(image)
 
-        faces = detector.detect_faces(image)
+        faces = detector.detect_faces(image_np)
         for face in faces:
             x, y, w, h = face["box"]
             x, y = max(0, x), max(0, y)
-            face_img = image[y:y+h, x:x+w]
 
+            face_img = image_np[y:y+h, x:x+w]
             if face_img.size == 0:
                 continue
 
-            cv2.imwrite(
-                os.path.join(faces_folder, f"face_{face_count}.jpg"),
-                face_img
+            Image.fromarray(face_img).save(
+                os.path.join(faces_folder, f"face_{face_count}.jpg")
             )
             face_count += 1
 
     return face_count
 
 # =========================
-# BLUR / TEXTURE ANALYSIS
+# BLUR / TEXTURE ANALYSIS (NO OPENCV)
 # =========================
 def blur_score(image_path):
-    img = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
-    if img is None:
-        return 0
-    return cv2.Laplacian(img, cv2.CV_64F).var()
+    img = np.array(Image.open(image_path).convert("L"), dtype=np.float32)
+    gy, gx = np.gradient(img)
+    return np.mean(gx**2 + gy**2)
 
 # =========================
-# DEEPFAKE MODEL (HF)
+# DEEPFAKE MODEL
 # =========================
+@st.cache_resource
+def load_model():
+    model_name = "prithivMLmods/Deep-Fake-Detector-Model"
+    processor = AutoImageProcessor.from_pretrained(model_name)
+    model = AutoModelForImageClassification.from_pretrained(model_name)
+    model.eval()
+    return processor, model
+
 class DeepfakeDetector:
     def __init__(self):
-        self.model_name = "prithivMLmods/Deep-Fake-Detector-Model"
-
-        self.processor = AutoImageProcessor.from_pretrained(self.model_name)
-        self.model = AutoModelForImageClassification.from_pretrained(self.model_name)
-
-        self.model.eval()
+        self.processor, self.model = load_model()
 
     def predict(self, image_path):
         image = Image.open(image_path).convert("RGB")
@@ -175,23 +158,21 @@ class DeepfakeDetector:
 
         fake_prob = probs[0].item()
         real_prob = probs[1].item()
-
         return real_prob, fake_prob
 
 # =========================
-# AGGREGATION + EXPLANATION SIGNALS
+# AGGREGATION
 # =========================
 def analyze_faces(faces_folder):
     detector = DeepfakeDetector()
     real_scores, fake_scores, blur_scores = [], [], []
 
     face_files = os.listdir(faces_folder)
-    if len(face_files) == 0:
+    if not face_files:
         return None, None, None, None
 
     for face in face_files:
         face_path = os.path.join(faces_folder, face)
-
         real, fake = detector.predict(face_path)
         real_scores.append(real)
         fake_scores.append(fake)
@@ -205,7 +186,7 @@ def analyze_faces(faces_folder):
     )
 
 # =========================
-# PIPELINE EXECUTION
+# PIPELINE
 # =========================
 if uploaded_video is not None:
     st.markdown("### 🔄 Processing Pipeline")
@@ -242,48 +223,22 @@ if uploaded_video is not None:
         margin = abs(fake_score - real_score)
 
         if fake_score > real_score and margin > 0.1:
-            st.error("🚨 **High Confidence Deepfake Detected**")
+            st.error("🚨 High Confidence Deepfake Detected")
         elif real_score > fake_score and margin > 0.1:
-            st.success("✅ **Media Appears Authentic**")
+            st.success("✅ Media Appears Authentic")
         else:
-            st.warning("⚠️ **Uncertain — Manual Review Recommended**")
+            st.warning("⚠️ Uncertain — Manual Review Recommended")
 
-        # =========================
-        # EXPLANATION
-        # =========================
         st.markdown("### 🧠 Why this verdict?")
-
-        explanations = []
-        explanations.append(
-            f"Analyzed {faces_count} face samples uniformly extracted across the video."
-        )
-
-        if variance < 0.02:
-            explanations.append(
-                "Predictions were consistent across frames, indicating stable visual patterns."
-            )
-        else:
-            explanations.append(
-                "Predictions varied across frames, reducing confidence."
-            )
-
-        if avg_blur < 100:
-            explanations.append(
-                "Detected unusually smooth facial textures, which may indicate synthetic artifacts."
-            )
-        else:
-            explanations.append(
-                "Facial texture sharpness appears natural across frames."
-            )
-
-        if margin > 0.3:
-            explanations.append(
-                "The model showed a strong confidence separation between real and fake classes."
-            )
-        else:
-            explanations.append(
-                "The confidence difference between real and fake predictions was marginal."
-            )
+        explanations = [
+            f"Analyzed {faces_count} face samples across the video.",
+            "Predictions were consistent across frames." if variance < 0.02 else
+            "Predictions varied across frames.",
+            "Detected abnormal smoothness in facial textures." if avg_blur < 100 else
+            "Facial texture sharpness appears natural.",
+            "Model confidence separation was strong." if margin > 0.3 else
+            "Model confidence separation was marginal."
+        ]
 
         for exp in explanations:
             st.write("•", exp)
@@ -295,5 +250,7 @@ if uploaded_video is not None:
                 col.image(os.path.join(faces_output, face), width=150)
 
     st.markdown("---")
-    st.caption("© TrustNet – Hackathon Prototype | Explainable Agentic AI System")
+    st.caption("© TrustNet – Hackathon Prototype | Cloud-Safe Explainable AI")
+
+
 
