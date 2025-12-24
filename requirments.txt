@@ -1,11 +1,13 @@
 streamlit
-torch
-torchvision
-transformers
-mtcnn
 numpy
 pillow
 imageio
+mtcnn
+transformers
+
+# PyTorch CPU (Streamlit Cloud safe)
+torch==2.1.2
+torchvision==0.16.2
 
 
 
