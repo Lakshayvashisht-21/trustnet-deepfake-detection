@@ -1,6 +1,5 @@
 streamlit
 opencv-python
-mtcnn
 torch
 torchvision
 numpy
@@ -8,3 +7,5 @@ Pillow
 transformers
 timm
 accelerate
+facenet-pytorch
+imageio
