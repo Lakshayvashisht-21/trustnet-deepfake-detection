@@ -138,11 +138,12 @@ def extract_faces(frames_folder, faces_folder):
 class DeepfakeDetector:
     def __init__(self):
         self.processor = AutoImageProcessor.from_pretrained(
-            "dima806/deepfake_detection"
-        )
-        self.model = AutoModelForImageClassification.from_pretrained(
-            "dima806/deepfake_detection"
-        )
+    "prithivMLmods/Deep-Fake-Detector-Model"
+)
+self.model = AutoModelForImageClassification.from_pretrained(
+    "prithivMLmods/Deep-Fake-Detector-Model"
+)
+
         self.model.eval()
 
     def predict(self, image_path):
@@ -233,6 +234,7 @@ if uploaded_video:
             )
 
     st.caption("© TrustNet – Hackathon Prototype")
+
 
 
 
